@@ -29,3 +29,4 @@ android.archs = arm64-v8a          # solo una arquitectura para que sea más rá
 android.accept_sdk_license = True
 android.skip_update = False
 android.copy_libs = 1
+android.extra_patches = patches/pyjnius_long_fix.patch:pyjnius
