@@ -1,4 +1,4 @@
-ini[app]
+[app]
 title = Tridan Connection
 package.name = tridan
 package.domain = org.test
