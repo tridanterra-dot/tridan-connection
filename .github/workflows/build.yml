@@ -18,13 +18,29 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Install all dependencies
+    - name: Install system dependencies (incluyendo libltdl-dev)
       run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential git libffi-dev libssl-dev \
-          libtool libtool-bin automake autoconf pkg-config openjdk-17-jdk \
-          zip unzip
-        pip install --upgrade pip
+        sudo apt-get update -qq
+        sudo apt-get install -y \
+          build-essential \
+          git \
+          zip \
+          unzip \
+          openjdk-17-jdk \
+          autoconf \
+          automake \
+          libtool \
+          libltdl-dev \
+          libffi-dev \
+          libssl-dev \
+          zlib1g-dev \
+          libncurses5-dev \
+          libncursesw5-dev \
+          cmake \
+          pkg-config \
+          ccache
+        
+        pip install --upgrade pip setuptools wheel
         pip install buildozer cython
     
     - name: Patch pyjnius for Python 3
@@ -35,7 +51,6 @@ jobs:
         mkdir -p $GITHUB_WORKSPACE/p4a-recipes/pyjnius
         cp -r /tmp/pyjnius/. $GITHUB_WORKSPACE/p4a-recipes/pyjnius/
         echo "✅ pyjnius parcheado"
-        grep -n "long" /tmp/pyjnius/jnius/jnius_utils.pxi || echo "✅ Sin 'long'"
 
     - name: Create clean buildozer.spec
       run: |
@@ -66,17 +81,15 @@ jobs:
         android.copy_libs = 1
         EOF
         
-        echo "✅ buildozer.spec creado:"
         cat buildozer.spec
     
     - name: Build APK
       run: |
-        echo "🔨 Iniciando build..."
+        echo "🔨 Build con libltdl-dev instalado"
         echo "⏰ $(date)"
-        cd $GITHUB_WORKSPACE
         yes | buildozer -v android debug 2>&1
         echo "⏰ $(date)"
-        ls -lh bin/ || echo "No hay APK en bin/"
+        ls -lh bin/ || echo "Verificando bin/"
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
