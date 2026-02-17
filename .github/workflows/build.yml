@@ -22,50 +22,58 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential git libffi-dev libssl-dev \
-          libtool libtool-bin automake autoconf pkg-config openjdk-17-jdk
+          libtool libtool-bin automake autoconf pkg-config openjdk-17-jdk \
+          zip unzip
     
-    - name: Install Buildozer
+    - name: Install Buildozer and Cython
       run: |
+        pip install --upgrade pip
         pip install buildozer cython
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        buildozer --version
     
     - name: Patch pyjnius for Python 3
       run: |
-        echo "🔧 Clonando y parcheando pyjnius..."
-        
-        # Clonar pyjnius
+        echo "🔧 Clonando pyjnius..."
         git clone https://github.com/kivy/pyjnius.git /tmp/pyjnius
-        cd /tmp/pyjnius
         
-        # Aplicar parche: reemplazar 'long' por 'int' en Python 3
-        echo "Aplicando parche para Python 3..."
-        sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' jnius/jnius_utils.pxi
+        echo "🔧 Aplicando parche Python 3..."
+        sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' /tmp/pyjnius/jnius/jnius_utils.pxi
         
-        # Verificar que se aplicó
-        echo "✅ Parche aplicado. Verificando..."
-        grep -n "isinstance.*long" jnius/jnius_utils.pxi || echo "✅ No quedan referencias a 'long'"
+        echo "✅ Verificando parche:"
+        grep -n "long" /tmp/pyjnius/jnius/jnius_utils.pxi || echo "✅ Sin referencias a 'long'"
         
-        # Crear directorio para recipe local
-        mkdir -p $GITHUB_WORKSPACE/pyjnius_patched
-        cp -r . $GITHUB_WORKSPACE/pyjnius_patched/
-        
-        echo "✅ pyjnius parcheado listo en pyjnius_patched/"
+        echo "📁 Copiando a recetas locales..."
+        mkdir -p $GITHUB_WORKSPACE/p4a-recipes/pyjnius
+        cp -r /tmp/pyjnius/. $GITHUB_WORKSPACE/p4a-recipes/pyjnius/
+        ls $GITHUB_WORKSPACE/p4a-recipes/pyjnius/
     
-    - name: Configure local recipes
+    - name: Update buildozer.spec
       run: |
-        # Crear directorio de recetas locales
-        mkdir -p p4a-recipes/pyjnius
-        cp -r $GITHUB_WORKSPACE/pyjnius_patched/* p4a-recipes/pyjnius/
+        echo "📝 Actualizando buildozer.spec..."
         
-        # Actualizar buildozer.spec para usar receta local
-        echo "" >> buildozer.spec
-        echo "p4a.local_recipes = ./p4a-recipes" >> buildozer.spec
+        # Agregar local recipes si no existe
+        grep -q "p4a.local_recipes" buildozer.spec || \
+          echo "p4a.local_recipes = ./p4a-recipes" >> buildozer.spec
         
+        echo "✅ buildozer.spec actualizado:"
         cat buildozer.spec
     
+    - name: Accept Android licenses
+      run: |
+        mkdir -p $HOME/.buildozer/android/platform
+        yes | buildozer android debug 2>&1 | head -50 || true
+        
     - name: Build APK
       run: |
-        echo "🔨 Compilando APK con pyjnius parcheado..."
-        yes | buildozer -v android debug || true
+        echo "🔨 Iniciando compilación completa..."
+        echo "⏰ Inicio: $(date)"
+        
+        yes | buildozer -v android debug
+        
+        echo "⏰ Fin: $(date)"
+        echo "📁 Contenido de bin/:"
+        ls -lh bin/ || echo "No hay archivos en bin/"
     
     - name: Upload APK artifact
       uses: actions/upload-artifact@v4
@@ -73,10 +81,13 @@ jobs:
       with:
         name: tridan-apk
         path: bin/*.apk
+        if-no-files-found: warn
     
     - name: Upload build log
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: build-log
-        path: .buildozer/logs/
+        path: |
+          .buildozer/android/platform/build-*/dists/*/
+        if-no-files-found: warn
