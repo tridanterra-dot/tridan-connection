@@ -22,7 +22,7 @@ jobs:
     - name: Build
       run: yes | buildozer -v android debug || true
     - name: Upload APK
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: tridan-apk
         path: bin/*.apk
