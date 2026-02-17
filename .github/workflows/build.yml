@@ -18,41 +18,55 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Install system dependencies (incluyendo libltdl-dev)
+    - name: Install system dependencies (completo con libltdl-dev)
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y \
-          build-essential \
-          git \
-          zip \
-          unzip \
-          openjdk-17-jdk \
-          autoconf \
-          automake \
-          libtool \
-          libltdl-dev \
-          libffi-dev \
-          libssl-dev \
-          zlib1g-dev \
-          libncurses5-dev \
-          libncursesw5-dev \
-          cmake \
-          pkg-config \
-          ccache
+          build-essential git zip unzip openjdk-17-jdk \
+          autoconf automake libtool libltdl-dev libffi-dev \
+          libssl-dev zlib1g-dev pkg-config ccache \
+          libncurses5-dev libncursesw5-dev cmake
         
+        echo "✅ Dependencias del sistema instaladas"
+    
+    - name: Install Python tools
+      run: |
         pip install --upgrade pip setuptools wheel
         pip install buildozer cython
+        echo "✅ Buildozer instalado"
+        buildozer --version
     
-    - name: Patch pyjnius for Python 3
+    - name: Download and patch pyjnius (master con fix Python 3)
       run: |
-        git clone https://github.com/kivy/pyjnius.git /tmp/pyjnius
-        sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' \
-          /tmp/pyjnius/jnius/jnius_utils.pxi
-        mkdir -p $GITHUB_WORKSPACE/p4a-recipes/pyjnius
-        cp -r /tmp/pyjnius/. $GITHUB_WORKSPACE/p4a-recipes/pyjnius/
-        echo "✅ pyjnius parcheado"
-
-    - name: Create clean buildozer.spec
+        echo "🔧 Clonando pyjnius desde master..."
+        git clone https://github.com/kivy/pyjnius.git /tmp/pyjnius_master
+        cd /tmp/pyjnius_master
+        
+        echo "📋 Revisando estado de 'long'..."
+        if grep -q "isinstance(arg, long)" jnius/jnius_utils.pxi; then
+          echo "⚠️ Master aún tiene 'long' - Aplicando parche..."
+          
+          # Parche completo: todas las referencias a 'long'
+          sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' jnius/jnius_utils.pxi
+          sed -i 's/(long)/int/g' jnius/jnius_utils.pxi
+          
+          echo "✅ Parche aplicado"
+        else
+          echo "✅ Master ya tiene el fix"
+        fi
+        
+        echo ""
+        echo "🔍 Verificación final - Buscando 'long':"
+        grep -n "long" jnius/jnius_utils.pxi || echo "✅ Sin referencias a 'long' - PERFECTO"
+        echo ""
+        
+        echo "📦 Instalando pyjnius parcheado..."
+        pip install -e .
+        
+        echo "✅ pyjnius instalado desde source parcheado"
+        python -c "import jnius; print('pyjnius version:', jnius.__version__)"
+    
+    - name: Create buildozer.spec (SIN pyjnius en requirements)
       run: |
         cat > buildozer.spec << 'EOF'
         [app]
@@ -62,10 +76,9 @@ jobs:
         source.dir = .
         source.include_exts = py
         version = 1.0
-        requirements = python3,kivy,pyjnius
+        requirements = python3,kivy
         orientation = portrait
         fullscreen = 0
-        p4a.local_recipes = ./p4a-recipes
 
         [buildozer]
         log_level = 2
@@ -81,20 +94,46 @@ jobs:
         android.copy_libs = 1
         EOF
         
+        echo "✅ buildozer.spec creado (sin pyjnius)"
+        echo ""
         cat buildozer.spec
     
-    - name: Build APK
+    - name: Build APK con pyjnius pre-instalado
       run: |
-        echo "🔨 Build con libltdl-dev instalado"
-        echo "⏰ $(date)"
+        echo ""
+        echo "=================================="
+        echo "🔨 INICIANDO BUILD DE TRIDAN"
+        echo "=================================="
+        echo "⏰ Inicio: $(date)"
+        echo ""
+        
+        # El build usará el pyjnius que ya instalamos
         yes | buildozer -v android debug 2>&1
-        echo "⏰ $(date)"
-        ls -lh bin/ || echo "Verificando bin/"
+        
+        echo ""
+        echo "⏰ Fin: $(date)"
+        echo "=================================="
+        echo ""
+        
+        if [ -d "bin" ]; then
+          echo "📁 Contenido de bin/:"
+          ls -lh bin/
+        else
+          echo "⚠️ Carpeta bin/ no existe"
+        fi
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: tridan-apk
+        name: tridan-connection-apk
         path: bin/*.apk
         if-no-files-found: warn
+    
+    - name: Upload logs si falla
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: build-logs
+        path: .buildozer/android/platform/build-*/
+        if-no-files-found: ignore
