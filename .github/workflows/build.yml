@@ -18,76 +18,70 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Install system dependencies
+    - name: Install all dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential git libffi-dev libssl-dev \
           libtool libtool-bin automake autoconf pkg-config openjdk-17-jdk \
           zip unzip
-    
-    - name: Install Buildozer and Cython
-      run: |
         pip install --upgrade pip
         pip install buildozer cython
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
-        buildozer --version
     
     - name: Patch pyjnius for Python 3
       run: |
-        echo "🔧 Clonando pyjnius..."
         git clone https://github.com/kivy/pyjnius.git /tmp/pyjnius
-        
-        echo "🔧 Aplicando parche Python 3..."
-        sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' /tmp/pyjnius/jnius/jnius_utils.pxi
-        
-        echo "✅ Verificando parche:"
-        grep -n "long" /tmp/pyjnius/jnius/jnius_utils.pxi || echo "✅ Sin referencias a 'long'"
-        
-        echo "📁 Copiando a recetas locales..."
+        sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' \
+          /tmp/pyjnius/jnius/jnius_utils.pxi
         mkdir -p $GITHUB_WORKSPACE/p4a-recipes/pyjnius
         cp -r /tmp/pyjnius/. $GITHUB_WORKSPACE/p4a-recipes/pyjnius/
-        ls $GITHUB_WORKSPACE/p4a-recipes/pyjnius/
-    
-    - name: Update buildozer.spec
+        echo "✅ pyjnius parcheado"
+        grep -n "long" /tmp/pyjnius/jnius/jnius_utils.pxi || echo "✅ Sin 'long'"
+
+    - name: Create clean buildozer.spec
       run: |
-        echo "📝 Actualizando buildozer.spec..."
+        cat > buildozer.spec << 'EOF'
+        [app]
+        title = Tridan Connection
+        package.name = tridan
+        package.domain = org.test
+        source.dir = .
+        source.include_exts = py
+        version = 1.0
+        requirements = python3,kivy,pyjnius
+        orientation = portrait
+        fullscreen = 0
+        p4a.local_recipes = ./p4a-recipes
+
+        [buildozer]
+        log_level = 2
+        warn_on_root = 0
+
+        android.permissions = INTERNET,BLUETOOTH,BLUETOOTH_ADMIN,ACCESS_FINE_LOCATION
+        android.api = 33
+        android.minapi = 21
+        android.ndk = 25b
+        android.archs = arm64-v8a
+        android.accept_sdk_license = True
+        android.skip_update = False
+        android.copy_libs = 1
+        EOF
         
-        # Agregar local recipes si no existe
-        grep -q "p4a.local_recipes" buildozer.spec || \
-          echo "p4a.local_recipes = ./p4a-recipes" >> buildozer.spec
-        
-        echo "✅ buildozer.spec actualizado:"
+        echo "✅ buildozer.spec creado:"
         cat buildozer.spec
     
-    - name: Accept Android licenses
-      run: |
-        mkdir -p $HOME/.buildozer/android/platform
-        yes | buildozer android debug 2>&1 | head -50 || true
-        
     - name: Build APK
       run: |
-        echo "🔨 Iniciando compilación completa..."
-        echo "⏰ Inicio: $(date)"
-        
-        yes | buildozer -v android debug
-        
-        echo "⏰ Fin: $(date)"
-        echo "📁 Contenido de bin/:"
-        ls -lh bin/ || echo "No hay archivos en bin/"
+        echo "🔨 Iniciando build..."
+        echo "⏰ $(date)"
+        cd $GITHUB_WORKSPACE
+        yes | buildozer -v android debug 2>&1
+        echo "⏰ $(date)"
+        ls -lh bin/ || echo "No hay APK en bin/"
     
-    - name: Upload APK artifact
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: tridan-apk
         path: bin/*.apk
-        if-no-files-found: warn
-    
-    - name: Upload build log
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: build-log
-        path: |
-          .buildozer/android/platform/build-*/dists/*/
         if-no-files-found: warn
