@@ -18,16 +18,47 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Install dependencies
+    - name: Install system dependencies
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk \
           autoconf automake libtool libltdl-dev libffi-dev libssl-dev \
           zlib1g-dev pkg-config ccache
         pip install --upgrade pip setuptools wheel
-        pip install buildozer cython
+        pip install buildozer
+        pip install cython==0.29.37
     
-    - name: Create buildozer.spec (solo ARM64)
+    - name: PARCHEAR pyjnius ANTES (manual)
+      run: |
+        echo "🔧 Clonando y parcheando pyjnius master..."
+        mkdir patched_pyjnius
+        cd patched_pyjnius
+        git clone https://github.com/kivy/pyjnius.git .
+        git checkout master
+        
+        echo "📝 Aplicando parche agresivo..."
+        # Reemplazar TODAS las ocurrencias de long
+        sed -i 's/\blong\b/int/g' jnius/jnius_utils.pxi
+        sed -i 's/isinstance(arg, long)/isinstance(arg, int)/g' jnius/jnius_utils.pxi
+        
+        echo "✅ Verificación:"
+        grep -n "long" jnius/jnius_utils.pxi || echo "✅ Sin 'long'"
+        
+        cd ..
+        pip install -e patched_pyjnius
+        echo "✅ pyjnius parcheado instalado"
+    
+    - name: Limpiar TODO el cache
+      run: |
+        echo "🧹 Limpieza TOTAL..."
+        rm -rf .buildozer
+        rm -rf bin
+        rm -rf cache
+        rm -rf .buildozer_cache
+        buildozer android clean || true
+        echo "✅ Cache eliminado"
+    
+    - name: Create buildozer.spec (con p4a develop)
       run: |
         cat > buildozer.spec << 'EOF'
         [app]
@@ -37,8 +68,9 @@ jobs:
         source.dir = .
         source.include_exts = py
         version = 1.0
-        requirements = python3,kivy,pyjnius
+        requirements = python3,kivy==2.3.0,cython==0.29.37
         orientation = portrait
+        fullscreen = 0
 
         [buildozer]
         log_level = 2
@@ -50,61 +82,44 @@ jobs:
         android.ndk = 25b
         android.archs = arm64-v8a
         android.accept_sdk_license = True
+        
+        p4a.fork = kivy
+        p4a.branch = develop
         EOF
         
+        echo "✅ buildozer.spec creado:"
         cat buildozer.spec
     
-    - name: Inicio del build (dejar que p4a descargue pyjnius)
+    - name: BUILD COMPLETO
       run: |
-        echo "🔨 Iniciando build inicial para que p4a descargue dependencias..."
-        timeout 600 yes | buildozer android debug || true
-    
-    - name: PARCHEAR pyjnius en el directorio de p4a
-      run: |
-        echo "🔧 Buscando pyjnius descargado por p4a..."
-        
-        # Buscar donde p4a descargó pyjnius
-        PYJNIUS_PATH=$(find .buildozer/android/platform/build-*/build/other_builds/pyjnius* -name "jnius_utils.pxi" 2>/dev/null | head -1)
-        
-        if [ -z "$PYJNIUS_PATH" ]; then
-          echo "⚠️ pyjnius aún no descargado, buscando en recipes..."
-          PYJNIUS_PATH=$(find .buildozer/android/platform/python-for-android/pythonforandroid/recipes/pyjnius -name "jnius_utils.pxi" 2>/dev/null | head -1)
-        fi
-        
-        if [ -n "$PYJNIUS_PATH" ]; then
-          echo "✅ Encontrado en: $PYJNIUS_PATH"
-          echo "📝 Contenido ANTES del parche:"
-          grep -n "isinstance.*long" "$PYJNIUS_PATH" || echo "Ya parcheado"
-          
-          echo "🔧 Aplicando parche..."
-          sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' "$PYJNIUS_PATH"
-          
-          echo "✅ Contenido DESPUÉS del parche:"
-          grep -n "isinstance.*long" "$PYJNIUS_PATH" || echo "✅ PARCHE EXITOSO"
-        else
-          echo "❌ No se encontró pyjnius. Continuando..."
-        fi
-        
-        # Buscar TODOS los archivos pyjnius_utils.pxi y parcharlos
-        find .buildozer -name "jnius_utils.pxi" -exec sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' {} \;
-        
-        echo "🔍 Verificación final en TODOS los archivos pyjnius:"
-        find .buildozer -name "jnius_utils.pxi" -exec grep -l "long" {} \; || echo "✅ Todos parcheados"
-    
-    - name: BUILD FINAL con pyjnius parcheado
-      run: |
-        echo "🚀 Build final con pyjnius ya parcheado..."
-        echo "⏰ $(date)"
+        echo "🔨 BUILD CON:"
+        echo "  - pyjnius YA instalado (parcheado)"
+        echo "  - Cython 0.29.37"
+        echo "  - p4a develop"
+        echo "  - Solo ARM64"
+        echo "  - Cache limpio"
+        echo ""
+        echo "⏰ Inicio: $(date)"
         
         yes | buildozer -v android debug 2>&1
         
-        echo "⏰ $(date)"
-        ls -lh bin/ || echo "Revisando..."
+        echo ""
+        echo "⏰ Fin: $(date)"
+        ls -lh bin/ || echo "Verificando..."
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: tridan-apk
+        name: tridan-connection-apk
         path: bin/*.apk
         if-no-files-found: warn
+    
+    - name: Upload logs si falla
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: build-logs-completos
+        path: |
+          .buildozer/
+        if-no-files-found: ignore
