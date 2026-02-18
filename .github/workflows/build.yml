@@ -18,55 +18,16 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Install system dependencies (completo con libltdl-dev)
+    - name: Install dependencies
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y \
-          build-essential git zip unzip openjdk-17-jdk \
-          autoconf automake libtool libltdl-dev libffi-dev \
-          libssl-dev zlib1g-dev pkg-config ccache \
-          libncurses5-dev libncursesw5-dev cmake
-        
-        echo "✅ Dependencias del sistema instaladas"
-    
-    - name: Install Python tools
-      run: |
+        sudo apt-get install -y build-essential git zip unzip openjdk-17-jdk \
+          autoconf automake libtool libltdl-dev libffi-dev libssl-dev \
+          zlib1g-dev pkg-config ccache
         pip install --upgrade pip setuptools wheel
         pip install buildozer cython
-        echo "✅ Buildozer instalado"
-        buildozer --version
     
-    - name: Download and patch pyjnius (master con fix Python 3)
-      run: |
-        echo "🔧 Clonando pyjnius desde master..."
-        git clone https://github.com/kivy/pyjnius.git /tmp/pyjnius_master
-        cd /tmp/pyjnius_master
-        
-        echo "📋 Revisando estado de 'long'..."
-        if grep -q "isinstance(arg, long)" jnius/jnius_utils.pxi; then
-          echo "⚠️ Master aún tiene 'long' - Aplicando parche..."
-          
-          # Parche completo: todas las referencias a 'long'
-          sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' jnius/jnius_utils.pxi
-          sed -i 's/(long)/int/g' jnius/jnius_utils.pxi
-          
-          echo "✅ Parche aplicado"
-        else
-          echo "✅ Master ya tiene el fix"
-        fi
-        
-        echo ""
-        echo "🔍 Verificación final - Buscando 'long':"
-        grep -n "long" jnius/jnius_utils.pxi || echo "✅ Sin referencias a 'long' - PERFECTO"
-        echo ""
-        
-        echo "📦 Instalando pyjnius parcheado..."
-        pip install -e .
-        
-        echo "✅ pyjnius instalado desde source parcheado"
-        python -c "import jnius; print('pyjnius version:', jnius.__version__)"
-    
-    - name: Create buildozer.spec (SIN pyjnius en requirements)
+    - name: Create buildozer.spec (solo ARM64)
       run: |
         cat > buildozer.spec << 'EOF'
         [app]
@@ -76,9 +37,8 @@ jobs:
         source.dir = .
         source.include_exts = py
         version = 1.0
-        requirements = python3,kivy
+        requirements = python3,kivy,pyjnius
         orientation = portrait
-        fullscreen = 0
 
         [buildozer]
         log_level = 2
@@ -90,50 +50,61 @@ jobs:
         android.ndk = 25b
         android.archs = arm64-v8a
         android.accept_sdk_license = True
-        android.skip_update = False
-        android.copy_libs = 1
         EOF
         
-        echo "✅ buildozer.spec creado (sin pyjnius)"
-        echo ""
         cat buildozer.spec
     
-    - name: Build APK con pyjnius pre-instalado
+    - name: Inicio del build (dejar que p4a descargue pyjnius)
       run: |
-        echo ""
-        echo "=================================="
-        echo "🔨 INICIANDO BUILD DE TRIDAN"
-        echo "=================================="
-        echo "⏰ Inicio: $(date)"
-        echo ""
+        echo "🔨 Iniciando build inicial para que p4a descargue dependencias..."
+        timeout 600 yes | buildozer android debug || true
+    
+    - name: PARCHEAR pyjnius en el directorio de p4a
+      run: |
+        echo "🔧 Buscando pyjnius descargado por p4a..."
         
-        # El build usará el pyjnius que ya instalamos
+        # Buscar donde p4a descargó pyjnius
+        PYJNIUS_PATH=$(find .buildozer/android/platform/build-*/build/other_builds/pyjnius* -name "jnius_utils.pxi" 2>/dev/null | head -1)
+        
+        if [ -z "$PYJNIUS_PATH" ]; then
+          echo "⚠️ pyjnius aún no descargado, buscando en recipes..."
+          PYJNIUS_PATH=$(find .buildozer/android/platform/python-for-android/pythonforandroid/recipes/pyjnius -name "jnius_utils.pxi" 2>/dev/null | head -1)
+        fi
+        
+        if [ -n "$PYJNIUS_PATH" ]; then
+          echo "✅ Encontrado en: $PYJNIUS_PATH"
+          echo "📝 Contenido ANTES del parche:"
+          grep -n "isinstance.*long" "$PYJNIUS_PATH" || echo "Ya parcheado"
+          
+          echo "🔧 Aplicando parche..."
+          sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' "$PYJNIUS_PATH"
+          
+          echo "✅ Contenido DESPUÉS del parche:"
+          grep -n "isinstance.*long" "$PYJNIUS_PATH" || echo "✅ PARCHE EXITOSO"
+        else
+          echo "❌ No se encontró pyjnius. Continuando..."
+        fi
+        
+        # Buscar TODOS los archivos pyjnius_utils.pxi y parcharlos
+        find .buildozer -name "jnius_utils.pxi" -exec sed -i 's/isinstance(\([^,]*\), long)/isinstance(\1, int)/g' {} \;
+        
+        echo "🔍 Verificación final en TODOS los archivos pyjnius:"
+        find .buildozer -name "jnius_utils.pxi" -exec grep -l "long" {} \; || echo "✅ Todos parcheados"
+    
+    - name: BUILD FINAL con pyjnius parcheado
+      run: |
+        echo "🚀 Build final con pyjnius ya parcheado..."
+        echo "⏰ $(date)"
+        
         yes | buildozer -v android debug 2>&1
         
-        echo ""
-        echo "⏰ Fin: $(date)"
-        echo "=================================="
-        echo ""
-        
-        if [ -d "bin" ]; then
-          echo "📁 Contenido de bin/:"
-          ls -lh bin/
-        else
-          echo "⚠️ Carpeta bin/ no existe"
-        fi
+        echo "⏰ $(date)"
+        ls -lh bin/ || echo "Revisando..."
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: tridan-connection-apk
+        name: tridan-apk
         path: bin/*.apk
         if-no-files-found: warn
-    
-    - name: Upload logs si falla
-      uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: build-logs
-        path: .buildozer/android/platform/build-*/
-        if-no-files-found: ignore
