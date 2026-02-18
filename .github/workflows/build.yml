@@ -40,6 +40,9 @@ jobs:
         # Reemplazar TODAS las ocurrencias de long
         sed -i 's/\blong\b/int/g' jnius/jnius_utils.pxi
         sed -i 's/isinstance(arg, long)/isinstance(arg, int)/g' jnius/jnius_utils.pxi
+
+        echo "🗑️ Eliminando carpeta de tests (Python 2)..."
+        rm -rf tests/
         
         echo "✅ Verificación:"
         grep -n "long" jnius/jnius_utils.pxi || echo "✅ Sin 'long'"
