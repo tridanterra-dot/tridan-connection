@@ -27,6 +27,14 @@ jobs:
         pip install --upgrade pip setuptools wheel
         pip install buildozer
         pip install cython==0.29.37
+        
+        - name: PARCHEAR pyjnius ANTES (manual)
+          run: |
+          echo " Clonando y parcheando pyjnius master..."
+          mkdir patched_pyjnius
+          cd patched_pyjnius
+          git clone https://github.com/kivy/pyjnius.git .
+          git checkout master
                
         echo "📝 Aplicando parche agresivo..."
         # Reemplazar TODAS las ocurrencias de long
