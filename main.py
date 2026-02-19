@@ -1,6 +1,6 @@
 from kivy.app import App
-from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
@@ -8,9 +8,16 @@ from kivy.uix.image import Image
 from kivy.clock import Clock
 from kivy.animation import Animation
 from kivy.graphics import Color, Rectangle
+from kivy.core.window import Window
+
+# Solo importar en Android
+if 'android' in str(platform):
+    from jnius import autoclass
+    from android.permissions import request_permissions, Permission, check_permission
+    from android.permissions import PermissionStatus
 
 class SplashScreen(FloatLayout):
-    """Pantalla de inicio con logo"""
+    """Pantalla de splash con logo completo"""
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         
@@ -20,7 +27,7 @@ class SplashScreen(FloatLayout):
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(size=self._update_rect, pos=self._update_rect)
         
-        # Logo con texto
+        # Logo centrado
         self.logo = Image(
             source='tridan_logo_full.png',
             size_hint=(None, None),
@@ -30,10 +37,10 @@ class SplashScreen(FloatLayout):
         )
         self.add_widget(self.logo)
         
-        # Animación fade in
-        anim = Animation(opacity=1, duration=1.5)
-        anim.start(self.logo)
-    
+        # Fade in
+        anim_in = Animation(opacity=1, duration=1.5)
+        anim_in.start(self.logo)
+
     def _update_rect(self, instance, value):
         self.rect.pos = instance.pos
         self.rect.size = instance.size
@@ -41,116 +48,130 @@ class SplashScreen(FloatLayout):
 
 class TridanApp(App):
     def build(self):
-        # Mostrar splash screen primero
         self.splash = SplashScreen()
-        Clock.schedule_once(self.show_main_screen, 3)  # 3 segundos
+        Clock.schedule_once(self.show_main_screen, 3)  # 3 segundos de splash
         return self.splash
     
     def show_main_screen(self, dt):
-        """Cambiar a la pantalla principal"""
+        """Transición suave del splash a la pantalla principal"""
+        # Fade out del splash
+        anim_out = Animation(opacity=0, duration=0.5)
+        anim_out.bind(on_complete=lambda *_: self.root.clear_widgets())
+        anim_out.start(self.splash)
+        
+        # Agregar main después del fade
+        Clock.schedule_once(self._add_main_layout, 0.6)
+    
+    def _add_main_layout(self, dt):
         self.root.clear_widgets()
         main_layout = self.create_main_layout()
         self.root.add_widget(main_layout)
         
-        # Solicitar permisos
-        Clock.schedule_once(self.request_permissions, 0.5)
+        # Solicitar permisos poco después de mostrar la interfaz
+        Clock.schedule_once(self.request_permissions, 1.0)
     
     def create_main_layout(self):
-        """Crear interfaz principal"""
         layout = BoxLayout(orientation='vertical', padding=10, spacing=5)
         
-        # Header con logo pequeño
-        header = BoxLayout(orientation='horizontal', size_hint=(1, 0.15), spacing=10)
+        # Header con logo pequeño + título (fondo sutil)
+        header = BoxLayout(orientation='horizontal', size_hint=(1, 0.12), spacing=10, padding=10)
+        with header.canvas.before:
+            Color(0.05, 0.2, 0.4, 0.9)  # Azul oscuro semitransparente
+            self.header_bg = Rectangle(size=header.size, pos=header.pos)
+        header.bind(size=self._update_header_bg, pos=self._update_header_bg)
         
         logo_small = Image(
             source='tridan_logo_icon.png',
             size_hint=(None, 1),
-            width=60,
-            allow_stretch=True
+            width=50,
+            allow_stretch=True,
+            keep_ratio=True
         )
         
         title = Label(
             text='TRIDAN CONNECTION',
-            font_size='20sp',
+            font_size='24sp',
             bold=True,
+            color=(1, 0.84, 0, 1),  # Dorado
             size_hint=(1, 1),
             halign='left',
-            valign='middle',
-            color=(1, 0.84, 0, 1)  # Dorado
+            valign='middle'
         )
         title.bind(size=title.setter('text_size'))
         
         header.add_widget(logo_small)
         header.add_widget(title)
+        layout.add_widget(header)
         
-        # Área de chat/log
+        # Área de chat (con scroll automático)
         self.chat = TextInput(
-            text='¡Bienvenido a Tridan Connection! 🌳\n',
+            text='¡Bienvenido a Tridan Connection! 🌳\nChat offline vía Bluetooth mesh en desarrollo.\n\n',
             multiline=True,
             readonly=True,
-            size_hint=(1, 0.5),
-            background_color=(0.05, 0.15, 0.3, 1)  # Azul oscuro Tridan
+            size_hint=(1, 0.55),
+            background_color=(0.03, 0.12, 0.25, 1),
+            foreground_color=(0.9, 0.9, 0.9, 1)
         )
+        layout.add_widget(self.chat)
         
         # Botón buscar Bluetooth
-        btn_buscar = Button(
+        self.btn_buscar = Button(
             text='🔵 Buscar dispositivos Bluetooth',
-            size_hint=(1, 0.1),
-            background_color=(0.05, 0.4, 0.7, 1),  # Azul Tridan
+            size_hint=(1, 0.08),
+            background_color=(0.05, 0.4, 0.7, 1),
             color=(1, 1, 1, 1)
         )
-        btn_buscar.bind(on_press=self.buscar_bluetooth)
+        self.btn_buscar.bind(on_press=self.buscar_bluetooth)
+        layout.add_widget(self.btn_buscar)
         
         # Input de mensaje
         self.input = TextInput(
             hint_text='Escribe un mensaje...',
-            size_hint=(1, 0.1),
+            size_hint=(1, 0.08),
             multiline=False,
-            background_color=(0.9, 0.9, 0.9, 1)
+            background_color=(0.9, 0.9, 0.9, 1),
+            foreground_color=(0, 0, 0, 1)
         )
+        layout.add_widget(self.input)
         
         # Botón enviar
         btn_enviar = Button(
             text='📤 Enviar',
-            size_hint=(1, 0.1),
-            background_color=(1, 0.84, 0, 1),  # Dorado Tridan
+            size_hint=(1, 0.08),
+            background_color=(1, 0.84, 0, 1),
             color=(0, 0, 0, 1)
         )
         btn_enviar.bind(on_press=self.send)
-        
-        # Versión en la esquina
-        version = Label(
-            text='v1.1',
-            size_hint=(1, 0.05),
-            font_size='10sp',
-            color=(0.5, 0.5, 0.5, 1)
-        )
-        
-        layout.add_widget(header)
-        layout.add_widget(self.chat)
-        layout.add_widget(btn_buscar)
-        layout.add_widget(self.input)
         layout.add_widget(btn_enviar)
+        
+        # Versión abajo
+        version = Label(
+            text='v1.1 - Prueba offline Bluetooth',
+            size_hint=(1, 0.05),
+            font_size='12sp',
+            color=(0.6, 0.6, 0.6, 1)
+        )
         layout.add_widget(version)
         
         return layout
     
+    def _update_header_bg(self, instance, value):
+        self.header_bg.size = instance.size
+        self.header_bg.pos = instance.pos
+    
     def log(self, mensaje):
-        """Agregar mensaje al chat/log"""
+        """Agregar línea al chat y auto-scroll"""
         self.chat.text += f'{mensaje}\n'
-        # Auto-scroll al final
-        self.chat.cursor = (0, len(self.chat.text))
+        # Mejor scroll: forzar al final
+        Clock.schedule_once(lambda dt: setattr(self.chat, 'cursor', (0, len(self.chat.text.splitlines()))), 0.1)
     
     def request_permissions(self, dt):
-        """Solicitar permisos de Android"""
+        """Solicitar permisos Bluetooth/ubicación en Android"""
         try:
             from android.permissions import request_permissions, Permission, check_permission
             
             self.log('📋 Verificando permisos...')
             
-            permisos_necesarios = []
-            
-            # Lista de permisos a verificar
             permisos = [
                 Permission.BLUETOOTH,
                 Permission.BLUETOOTH_ADMIN,
@@ -160,78 +181,83 @@ class TridanApp(App):
                 Permission.ACCESS_COARSE_LOCATION
             ]
             
-            # Verificar cuáles faltan
-            for permiso in permisos:
-                if not check_permission(permiso):
-                    permisos_necesarios.append(permiso)
+            faltantes = [p for p in permisos if not check_permission(p)]
             
-            if permisos_necesarios:
-                self.log(f'📋 Solicitando {len(permisos_necesarios)} permisos...')
-                request_permissions(permisos_necesarios)
-                self.log('✅ Permisos solicitados. Por favor acepta.')
+            if faltantes:
+                self.log(f'📋 Solicitando {len(faltantes)} permisos...')
+                request_permissions(permisos, self.permission_callback)
+                self.log('✅ Permisos solicitados. Por favor acepta el diálogo.')
             else:
-                self.log('✅ Todos los permisos ya otorgados')
+                self.log('✅ Todos los permisos ya están concedidos')
+                self.log('Puedes usar Bluetooth ahora.')
                 
         except ImportError:
-            self.log('⚠️ No se puede solicitar permisos (no es Android)')
+            self.log('⚠️ No es Android → permisos no solicitados')
         except Exception as e:
-            self.log(f'⚠️ Error permisos: {e}')
+            self.log(f'⚠️ Error al solicitar permisos: {str(e)}')
+    
+    def permission_callback(self, permissions, grant_results):
+        """Callback después de respuesta del usuario"""
+        concedidos = sum(grant_results)
+        total = len(grant_results)
+        self.log(f'📊 Permisos concedidos: {concedidos}/{total}')
+        
+        if concedidos == total:
+            self.log('🎉 ¡Permisos completos! Listo para Bluetooth mesh.')
+            # Aquí podrías activar funciones BLE
+        else:
+            self.log('⚠️ Algunos permisos denegados. Ve a Ajustes → Permisos para permitirlos manualmente.')
     
     def buscar_bluetooth(self, instance):
-        """Buscar dispositivos Bluetooth"""
-        self.log('\n🔍 Iniciando búsqueda Bluetooth...')
+        """Buscar dispositivos Bluetooth emparejados (versión simple)"""
+        self.log('\n🔍 Iniciando búsqueda de dispositivos...')
+        self.btn_buscar.text = 'Buscando...'  # Feedback visual
+        self.btn_buscar.disabled = True
         
         try:
-            from jnius import autoclass
+            adapter = autoclass('android.bluetooth.BluetoothAdapter').getDefaultAdapter()
             
-            # Importar clases de Android
-            BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-            
-            # Obtener adaptador
-            adapter = BluetoothAdapter.getDefaultAdapter()
-            
-            if adapter is None:
-                self.log('❌ Este dispositivo no tiene Bluetooth')
+            if not adapter:
+                self.log('❌ No se detectó adaptador Bluetooth')
+                self._reset_buscar_btn()
                 return
             
             if not adapter.isEnabled():
-                self.log('⚠️ Bluetooth desactivado')
-                self.log('Por favor activa Bluetooth e intenta de nuevo')
+                self.log('⚠️ Bluetooth está apagado. Actívalo en ajustes.')
+                self._reset_buscar_btn()
                 return
             
             self.log('✅ Bluetooth activo')
             
-            # Dispositivos emparejados
-            paired_devices = adapter.getBondedDevices().toArray()
+            paired = adapter.getBondedDevices().toArray()
             
-            if len(paired_devices) == 0:
-                self.log('📱 No hay dispositivos emparejados')
-                self.log('Empareja dispositivos en Configuración primero')
+            if not paired:
+                self.log('📴 No hay dispositivos emparejados aún.')
             else:
-                self.log(f'\n📱 Dispositivos emparejados: {len(paired_devices)}')
+                self.log(f'📱 {len(paired)} dispositivos emparejados encontrados:')
                 self.log('─' * 40)
-                for i, device in enumerate(paired_devices, 1):
-                    name = device.getName()
-                    address = device.getAddress()
-                    self.log(f'{i}. {name}')
-                    self.log(f'   MAC: {address}')
+                for dev in paired:
+                    name = dev.getName() or '(sin nombre)'
+                    addr = dev.getAddress()
+                    self.log(f'• {name}')
+                    self.log(f'  MAC: {addr}')
                 self.log('─' * 40)
             
-            self.log('✅ Búsqueda completada\n')
-            
-        except ImportError:
-            self.log('❌ Error: pyjnius no disponible')
         except Exception as e:
-            self.log(f'❌ Error: {e}')
+            self.log(f'❌ Error al buscar: {str(e)}')
+        
+        self._reset_buscar_btn()
+    
+    def _reset_buscar_btn(self):
+        self.btn_buscar.text = '🔵 Buscar dispositivos Bluetooth'
+        self.btn_buscar.disabled = False
     
     def send(self, instance):
-        """Enviar mensaje local"""
         msg = self.input.text.strip()
         if msg:
             self.chat.text += f'Tú: {msg}\n'
             self.input.text = ''
-            # Auto-scroll
-            self.chat.cursor = (0, len(self.chat.text))
+            Clock.schedule_once(lambda dt: setattr(self.chat, 'cursor', (0, len(self.chat.text.splitlines()))), 0.1)
 
 if __name__ == '__main__':
     TridanApp().run()
