@@ -8,13 +8,7 @@ from kivy.uix.image import Image
 from kivy.clock import Clock
 from kivy.animation import Animation
 from kivy.graphics import Color, Rectangle
-from kivy.core.window import Window
-
-# Solo importar en Android
-if 'android' in str(platform):
-    from jnius import autoclass
-    from android.permissions import request_permissions, Permission, check_permission
-    from android.permissions import PermissionStatus
+import sys
 
 class SplashScreen(FloatLayout):
     """Pantalla de splash con logo completo"""
@@ -56,11 +50,8 @@ class TridanApp(App):
         """Transición suave del splash a la pantalla principal"""
         # Fade out del splash
         anim_out = Animation(opacity=0, duration=0.5)
-        anim_out.bind(on_complete=lambda *_: self.root.clear_widgets())
+        anim_out.bind(on_complete=lambda *_: self._add_main_layout(None))
         anim_out.start(self.splash)
-        
-        # Agregar main después del fade
-        Clock.schedule_once(self._add_main_layout, 0.6)
     
     def _add_main_layout(self, dt):
         self.root.clear_widgets()
@@ -162,102 +153,128 @@ class TridanApp(App):
     def log(self, mensaje):
         """Agregar línea al chat y auto-scroll"""
         self.chat.text += f'{mensaje}\n'
-        # Mejor scroll: forzar al final
-        Clock.schedule_once(lambda dt: setattr(self.chat, 'cursor', (0, len(self.chat.text.splitlines()))), 0.1)
+        # Auto-scroll al final
+        Clock.schedule_once(lambda dt: setattr(self.chat, 'cursor', (0, len(self.chat.text))), 0.1)
     
     def request_permissions(self, dt):
         """Solicitar permisos Bluetooth/ubicación en Android"""
+        # Solo importar en Android
+        if 'ANDROID_BOOTLOGO' not in sys.environ:
+            self.log('ℹ️ No es Android - permisos no necesarios')
+            return
+            
         try:
             from android.permissions import request_permissions, Permission, check_permission
             
             self.log('📋 Verificando permisos...')
             
-            permisos = [
+            # Lista de permisos a solicitar
+            permisos_solicitar = []
+            
+            # Permisos básicos (Android 6+)
+            permisos_basicos = [
                 Permission.BLUETOOTH,
                 Permission.BLUETOOTH_ADMIN,
-                Permission.BLUETOOTH_SCAN,
-                Permission.BLUETOOTH_CONNECT,
                 Permission.ACCESS_FINE_LOCATION,
                 Permission.ACCESS_COARSE_LOCATION
             ]
             
-            faltantes = [p for p in permisos if not check_permission(p)]
+            # Intentar agregar permisos de Android 12+ si existen
+            try:
+                permisos_basicos.append(Permission.BLUETOOTH_SCAN)
+                permisos_basicos.append(Permission.BLUETOOTH_CONNECT)
+            except AttributeError:
+                self.log('ℹ️ Permisos BT nuevos no disponibles')
             
-            if faltantes:
-                self.log(f'📋 Solicitando {len(faltantes)} permisos...')
-                request_permissions(permisos, self.permission_callback)
-                self.log('✅ Permisos solicitados. Por favor acepta el diálogo.')
+            # Verificar cuáles faltan
+            for permiso in permisos_basicos:
+                try:
+                    if not check_permission(permiso):
+                        permisos_solicitar.append(permiso)
+                except:
+                    pass  # Ignorar permisos no disponibles
+            
+            if permisos_solicitar:
+                self.log(f'📋 Solicitando {len(permisos_solicitar)} permisos...')
+                request_permissions(permisos_solicitar)
+                self.log('✅ Por favor acepta en el diálogo de Android')
             else:
-                self.log('✅ Todos los permisos ya están concedidos')
-                self.log('Puedes usar Bluetooth ahora.')
+                self.log('✅ Todos los permisos ya concedidos')
+                self.log('🔵 Puedes buscar dispositivos Bluetooth')
                 
-        except ImportError:
-            self.log('⚠️ No es Android → permisos no solicitados')
+        except ImportError as e:
+            self.log(f'⚠️ Error importando permisos: {e}')
         except Exception as e:
             self.log(f'⚠️ Error al solicitar permisos: {str(e)}')
     
-    def permission_callback(self, permissions, grant_results):
-        """Callback después de respuesta del usuario"""
-        concedidos = sum(grant_results)
-        total = len(grant_results)
-        self.log(f'📊 Permisos concedidos: {concedidos}/{total}')
-        
-        if concedidos == total:
-            self.log('🎉 ¡Permisos completos! Listo para Bluetooth mesh.')
-            # Aquí podrías activar funciones BLE
-        else:
-            self.log('⚠️ Algunos permisos denegados. Ve a Ajustes → Permisos para permitirlos manualmente.')
-    
     def buscar_bluetooth(self, instance):
-        """Buscar dispositivos Bluetooth emparejados (versión simple)"""
-        self.log('\n🔍 Iniciando búsqueda de dispositivos...')
-        self.btn_buscar.text = 'Buscando...'  # Feedback visual
+        """Buscar dispositivos Bluetooth emparejados"""
+        self.log('\n🔍 Iniciando búsqueda...')
+        self.btn_buscar.text = '⏳ Buscando...'
         self.btn_buscar.disabled = True
         
+        # Solo funciona en Android
+        if 'ANDROID_BOOTLOGO' not in sys.environ:
+            self.log('⚠️ Esta función solo funciona en Android')
+            self._reset_buscar_btn()
+            return
+        
         try:
-            adapter = autoclass('android.bluetooth.BluetoothAdapter').getDefaultAdapter()
+            from jnius import autoclass
             
-            if not adapter:
+            BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+            adapter = BluetoothAdapter.getDefaultAdapter()
+            
+            if adapter is None:
                 self.log('❌ No se detectó adaptador Bluetooth')
                 self._reset_buscar_btn()
                 return
             
             if not adapter.isEnabled():
-                self.log('⚠️ Bluetooth está apagado. Actívalo en ajustes.')
+                self.log('⚠️ Bluetooth apagado')
+                self.log('Por favor actívalo en ajustes')
                 self._reset_buscar_btn()
                 return
             
             self.log('✅ Bluetooth activo')
             
-            paired = adapter.getBondedDevices().toArray()
+            # Obtener dispositivos emparejados
+            paired_devices = adapter.getBondedDevices().toArray()
             
-            if not paired:
-                self.log('📴 No hay dispositivos emparejados aún.')
+            if len(paired_devices) == 0:
+                self.log('📴 No hay dispositivos emparejados')
+                self.log('Empareja dispositivos en Ajustes → Bluetooth')
             else:
-                self.log(f'📱 {len(paired)} dispositivos emparejados encontrados:')
-                self.log('─' * 40)
-                for dev in paired:
-                    name = dev.getName() or '(sin nombre)'
-                    addr = dev.getAddress()
-                    self.log(f'• {name}')
-                    self.log(f'  MAC: {addr}')
-                self.log('─' * 40)
+                self.log(f'\n📱 {len(paired_devices)} dispositivos encontrados:')
+                self.log('═' * 40)
+                for i, device in enumerate(paired_devices, 1):
+                    name = device.getName() or '(sin nombre)'
+                    address = device.getAddress()
+                    self.log(f'{i}. {name}')
+                    self.log(f'   📍 {address}')
+                self.log('═' * 40)
+                self.log('✅ Búsqueda completada\n')
             
+        except ImportError:
+            self.log('❌ Error: jnius no disponible')
         except Exception as e:
-            self.log(f'❌ Error al buscar: {str(e)}')
+            self.log(f'❌ Error: {str(e)}')
         
         self._reset_buscar_btn()
     
     def _reset_buscar_btn(self):
+        """Restaurar botón de búsqueda"""
         self.btn_buscar.text = '🔵 Buscar dispositivos Bluetooth'
         self.btn_buscar.disabled = False
     
     def send(self, instance):
+        """Enviar mensaje local"""
         msg = self.input.text.strip()
         if msg:
-            self.chat.text += f'Tú: {msg}\n'
+            self.chat.text += f'💬 Tú: {msg}\n'
             self.input.text = ''
-            Clock.schedule_once(lambda dt: setattr(self.chat, 'cursor', (0, len(self.chat.text.splitlines()))), 0.1)
+            # Auto-scroll
+            Clock.schedule_once(lambda dt: setattr(self.chat, 'cursor', (0, len(self.chat.text))), 0.1)
 
 if __name__ == '__main__':
     TridanApp().run()
